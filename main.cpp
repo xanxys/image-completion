@@ -458,6 +458,8 @@ void create_index_gist(string dir_path){
             Mat desc=image_descriptor(img);
             index<<*it<<endl;
             write_descriptor_text(index,desc);
+            
+            n++;
         }
     }
     
