@@ -431,8 +431,11 @@ Mat read_descriptor_text(istream& is){
     return desc;
 }
 
-void create_index(string dir_path){
-    cout<<start_bold<<"creating index"<<end_bold<<endl;
+typedef vector<pair<Mat,string>> IndexGist;
+typedef pair<Mat,Mat> IndexWeight;
+
+void create_index_gist(string dir_path){
+    cout<<start_bold<<"creating index.gist"<<end_bold<<endl;
     
     fs::path p(dir_path);
     
@@ -440,7 +443,7 @@ void create_index(string dir_path){
     
     int n=0;
     
-    ofstream index("./index",ios::out);
+    ofstream index("./index.gist",ios::out);
     
     fs::directory_iterator end;
     for(fs::directory_iterator it(p);it!=end;++it){
@@ -463,10 +466,10 @@ void create_index(string dir_path){
     cout<<n<<" images are indexed"<<endl;
 }
 
-vector<pair<Mat,string>> load_index(){
-    cout<<start_bold<<"loading index"<<end_bold<<endl;
+IndexGist load_index_gist(){
+    cout<<start_bold<<"loading index.gist"<<end_bold<<endl;
 
-    ifstream index("./index",ios::in);
+    ifstream index("./index.gist",ios::in);
     
     int n=0;
     vector<pair<Mat,string>> ix;
@@ -487,6 +490,53 @@ vector<pair<Mat,string>> load_index(){
     
     return ix;
 }
+
+
+
+
+void dump_index_gist(IndexGist& igist){
+    cout<<start_bold<<"dumping index.gist"<<end_bold<<endl;
+    
+    cout<<"first 3dims before PCA"<<endl;
+    ofstream naive("./naive.table",ios::out);
+    for(int i=0;i<igist.size();i++){
+        Mat& m=igist[i].first;
+        naive<<m.at<float>(0)<<" "<<m.at<float>(1)<<" "<<m.at<float>(2)<<endl;
+    }
+    naive.close();
+    
+    
+    cout<<"first 2dims after PCA"<<endl;
+    
+    Mat data(igist.size(),dim_descriptor,CV_32F);
+    for(int i=0;i<igist.size();i++)
+        for(int j=0;j<dim_descriptor;j++)
+            data.row(i)=igist[i].first.t();
+    
+    PCA pca=PCA(data,Mat(),CV_PCA_DATA_AS_ROW);
+    
+    Mat data_good;
+    pca.project(data,data_good);
+    
+    
+    ofstream good("./PCA.table",ios::out);
+    for(int i=0;i<igist.size();i++){
+        Mat m=data_good.row(i);
+        good<<m.at<float>(0)<<" "<<m.at<float>(1)<<" "<<m.at<float>(2)<<endl;
+    }
+    good.close();
+}
+
+void create_index_weight(IndexGist& igist){
+}
+
+IndexWeight load_index_weight(){
+}
+
+
+
+
+
 
 template<typename K>
 bool comparing_values_in(vector<K>& vs,int i,int j){
@@ -517,7 +567,7 @@ vector<string> search_image(vector<pair<Mat,string>>& index,Mat& query,int n){
 
 // parse argument and pass configuration to the composition function
 int main(int argc,char *argv[]){
-    vector<pair<Mat,string>> index;
+    IndexGist index;
     
     // interactive shell
     while(true){
@@ -531,11 +581,17 @@ int main(int argc,char *argv[]){
             break;
         }
         else if(command=="create-anew-please-really"){
-            create_index("/data/flickr-large");
-            index=load_index();
+            create_index_gist("/data/flickr-large");
+            index=load_index_gist();
+        }
+        else if(command=="dump.gist"){
+            dump_index_gist(index);
+        }
+        else if(command=="create.weight"){
+            create_index_weight(index);
         }
         else if(command=="load"){
-            index=load_index();
+            index=load_index_gist();
         }
         else if(command=="query"){
             int n;
