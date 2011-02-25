@@ -1,7 +1,12 @@
 #include <set>
 #include <iostream>
 #include <fstream>
+#include <vector>
+#include <algorithm>
+#include <functional>
+#include <boost/bind.hpp>
 #include <boost/foreach.hpp>
+#include <boost/lambda/lambda.hpp>
 #include <boost/filesystem/path.hpp>
 #include <boost/filesystem/operations.hpp>
 #include <boost/random/mersenne_twister.hpp>
@@ -483,18 +488,87 @@ vector<pair<Mat,string>> load_index(){
     return ix;
 }
 
+template<typename K>
+bool comparing_values_in(vector<K>& vs,int i,int j){
+    return vs[i]<vs[j];
+}
 
+vector<string> search_image(vector<pair<Mat,string>>& index,Mat& query,int n){
+    vector<float> ds;
+    vector<int> is;
+    
+    ds.reserve(index.size());
+    is.reserve(index.size());
+    
+    for(int i=0;i<index.size();i++){
+        ds.push_back(norm(query,index[i].first));
+        is.push_back(i);
+    }
+    sort(is.begin(),is.end(),bind(comparing_values_in<float>,ds,_1,_2)); 
+   
+    vector<string> ss;
+    for(int i=0;i<n;i++)
+        ss.push_back(index[is[i]].second);
+    
+    return ss;
+}
 
 
 
 // parse argument and pass configuration to the composition function
 int main(int argc,char *argv[]){
-    // commands
-//    create_index("/data/flickr-large");
-    load_index();
+    vector<pair<Mat,string>> index;
     
-    // TODO: interactive shell
-    
+    // interactive shell
+    while(true){
+        cout<<">"<<flush;
+        
+        string command;
+        getline(cin,command);
+        
+        if(command=="q"){
+            cout<<"exiting"<<endl;
+            break;
+        }
+        else if(command=="create-anew-please-really"){
+            create_index("/data/flickr-large");
+            index=load_index();
+        }
+        else if(command=="load"){
+            index=load_index();
+        }
+        else if(command=="query"){
+            int n;
+            string path,d;
+            
+            cout<<"query image path?"<<flush;
+            getline(cin,path);
+            cout<<"query size?"<<flush;
+            cin>>n;
+            getline(cin,d);
+            
+            cout<<"retrieving images"<<endl;
+            Mat qi=imread(path);
+            Mat q=image_descriptor(qi);
+            vector<string> paths=search_image(index,q,n);
+            
+            int i=0;
+            for(auto it=paths.begin();it!=paths.end();++it){
+                ostringstream fn;
+                fn<<"result-"<<i++<<".jpeg";
+                
+                cout<<":"<<*it<<" > "<<fn.str()<<endl;
+                Mat img=imread(*it);
+                imwrite(fn.str(),img);
+            }
+            
+            
+            
+            
+        }
+        else
+            cout<<"unknown command: "<<command<<endl;
+    }
     
     return 0;
 }
