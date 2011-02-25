@@ -119,8 +119,8 @@ Mat image_descriptor(Mat& img){
     for(int lv=0;lv<4;lv++){
         for(int ki=0;ki<4;ki++){
             Mat lx;
-            filter2D(l,lx,CV_32F,kx);
-            lx=abs(lx);
+            filter2D(l,lx,CV_32F,*kernels[ki]);
+            lx=max(lx,0);
             
             float w=lx.size().width;
             float h=lx.size().height;
