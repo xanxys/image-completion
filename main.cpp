@@ -281,93 +281,175 @@ vector<string> search_image(vector<pair<Mat,string>>& index,Mat& query,int n){
     return ss;
 }
 
+vector<Mat> create_pyramid(Mat m,int n,float exponent=0){
+    vector<Mat> pyr;
+    
+    for(int i=0;i<n;i++){
+        pyr.insert(pyr.begin(),m);
+        
+        Mat t;
+        resize(m,t,Size(),0.5,0.5,INTER_LINEAR);
+        
+
+        m=t*pow(2,exponent);
+    }
+    
+    return pyr;
+}
 
 // src must be defined in 1px boundary around mask
 // grad_x(x,y):=f(x+1,y)-f(x,y), likewise for grad_y
 void gradient_transfer(
-    Mat& dst,Mat& mask,
+    Mat& dst0,Mat& mask0,
     function<float(int,int)> src,
     function<float(int,int)> grad_x,
     function<float(int,int)> grad_y){
     
-    const int n=countNonZero(mask);
-    const int size[]={n,n};
-    
-    const int w=dst.size().width;
-    const int h=dst.size().height;
+    const int w0=dst0.size().width;
+    const int h0=dst0.size().height;
     
     // constraint
-    Mat sl(h,w,CV_32F),k(h,w,CV_32F);
+    Mat sl(h0,w0,CV_32F),k(h0,w0,CV_32F);
     
-    for(int y=0;y<h;y++){
-        for(int x=0;x<w;x++){
-            if(mask.at<uint8_t>(y,x)==0) continue;
-            
-            int ys[]={y-1,y,y,y+1};
-            int xs[]={x,x-1,x+1,x};
-            
-            int ns=0;
-            float vs=0;
-            for(int i=0;i<4;i++){
-                int xc=xs[i],yc=ys[i];
-                if(xc<0 || xc>=w || yc<0 || yc>=h) continue;
-                if(mask.at<uint8_t>(yc,xc)==0) vs+=src(xc,yc);
-                
-                if(xc==x){
-                    if(yc<y)
-                        vs+=grad_y(x,yc);
-                    else
-                        vs-=grad_y(x,y);
-                }
-                else{
-                    if(xc<x)
-                        vs+=grad_x(xc,y);
-                    else
-                        vs-=grad_x(x,y);
-                }
-                
-                ns++;
+    for(int y=0;y<h0;y++){
+        for(int x=0;x<w0;x++){
+            if(mask0.at<uint8_t>(y,x)==0){
+                k.at<float>(y,x)=0;
+                sl.at<float>(y,x)=0;
             }
-            
-            k.at<float>(y,x)=1.0/ns;
-            sl.at<float>(y,x)=vs;
+            else{
+                
+                int ys[]={y-1,y,y,y+1};
+                int xs[]={x,x-1,x+1,x};
+                
+                int ns=0;
+                float vs=0;
+                for(int i=0;i<4;i++){
+                    int xc=xs[i],yc=ys[i];
+                    if(xc<0 || xc>=w0 || yc<0 || yc>=h0) continue;
+                    if(mask0.at<uint8_t>(yc,xc)==0) vs+=src(xc,yc);
+                    
+                    if(xc==x){
+                        if(yc<y)
+                            vs+=grad_y(x,yc);
+                        else
+                            vs-=grad_y(x,y);
+                    }
+                    else{
+                        if(xc<x)
+                            vs+=grad_x(xc,y);
+                        else
+                            vs-=grad_x(x,y);
+                    }
+                    
+                    ns++;
+                }
+                
+                k.at<float>(y,x)=1.0/ns;
+                sl.at<float>(y,x)=vs;
+            }
         }
     }
     
     // solve iteratively
-    float err_prev=1e100;
-    while(true){
-        float omega=1.9;
-        float err=0;
+    const int levels=1;
+    
+    vector<Mat>
+        pyr_mask=create_pyramid(mask0,levels),
+        pyr_dst=create_pyramid(dst0,levels),
+        pyr_sl=create_pyramid(sl,levels,1),
+        pyr_k=create_pyramid(k,levels,0);
+    
+    //    const int n=countNonZero(mask0);
+    
+    for(int l=0;l<levels;l++){
+        cout<<"level: "<<l<<endl;
+        
+        Mat& mask=pyr_mask[l];
+        Mat& dst=pyr_dst[l];
+        Mat& sl=pyr_sl[l];
+        Mat& k=pyr_k[l];
+        
+        int w=pyr_dst[l].size().width;
+        int h=pyr_dst[l].size().height;
+        
+        float err_prev=1e100;
+        int n_iter=0;
+        
+        while(true){
+            float omega=1.9;
+            float err=0;
+            
+            for(int y=0;y<h;y++)
+                for(int x=0;x<w;x++)
+                    if(mask.at<uint8_t>(y,x)>0){
+                        float vs=sl.at<float>(y,x);
+                        
+                        if(x>=1 && mask.at<uint8_t>(y,x-1)>0)
+                            vs+=dst.at<float>(y,x-1);
+                        if(y>=1 && mask.at<uint8_t>(y-1,x)>0)
+                            vs+=dst.at<float>(y-1,x);
+                        if(x<w-1 && mask.at<uint8_t>(y,x+1)>0)
+                            vs+=dst.at<float>(y,x+1);
+                        if(y<h-1 && mask.at<uint8_t>(y+1,x)>0)
+                            vs+=dst.at<float>(y+1,x);
+                        
+                        vs*=k.at<float>(y,x);
+                        
+                        // successive over-relaxation
+                        float vs_old=dst.at<float>(y,x);
+                        vs=(1-omega)*vs_old+omega*vs;
+                        dst.at<float>(y,x)=vs;
+                                            
+                        err+=abs(vs_old-vs);
+                    }
+            
+            cout<<"iter: "<<err<<endl;
+            if(n_iter++>100) break;
+            if(err>err_prev && err<100) break;
+            
+            err_prev=err;
+        }
+        
+        // error vector generation
+        Mat err_vect;
+        dst.copyTo(err_vect);
         
         for(int y=0;y<h;y++)
             for(int x=0;x<w;x++)
                 if(mask.at<uint8_t>(y,x)>0){
-                    float vs=sl.at<float>(y,x);
+                    float vs=dst.at<float>(y,x)/k.at<float>(y,x);
                     
                     if(x>=1 && mask.at<uint8_t>(y,x-1)>0)
-                        vs+=dst.at<float>(y,x-1);
+                        vs-=dst.at<float>(y,x-1);
                     if(y>=1 && mask.at<uint8_t>(y-1,x)>0)
-                        vs+=dst.at<float>(y-1,x);
+                        vs-=dst.at<float>(y-1,x);
                     if(x<w-1 && mask.at<uint8_t>(y,x+1)>0)
-                        vs+=dst.at<float>(y,x+1);
+                        vs-=dst.at<float>(y,x+1);
                     if(y<h-1 && mask.at<uint8_t>(y+1,x)>0)
-                        vs+=dst.at<float>(y+1,x);
+                        vs-=dst.at<float>(y+1,x);
                     
-                    vs*=k.at<float>(y,x);
-                    
-                    // successive over-relaxation
-                    float vs_old=dst.at<float>(y,x);
-                    vs=(1-omega)*vs_old+omega*vs;
-                    dst.at<float>(y,x)=vs;
-                                        
-                    err+=abs(vs_old-vs);
+
+                    err_vect.at<float>(y,x)=vs-sl.at<float>(y,x);
                 }
+                else
+                    err_vect.at<float>(y,x)=0;
         
-        cout<<"iter: "<<err<<endl;
-        if(err>err_prev && err<100) break;
-        
-        err_prev=err;
+        // scaling
+        if(l<levels-1){
+            Mat temp;
+            resize(dst,temp,pyr_dst[l+1].size());
+            
+            temp.copyTo(pyr_dst[l+1],pyr_mask[l+1]);
+        }
+        else
+            dst.copyTo(dst0);
+            
+        ostringstream os;
+        os<<"aux-MG-lv-"<<l<<".jpeg";
+        imwrite(os.str(),dst);
+
+        imwrite("err-"+os.str(),0.1*err_vect.size().area()*abs(err_vect)/norm(err_vect));
     }
     
 }
@@ -417,6 +499,8 @@ void blend_images(Mat& img,Mat& mask,Mat& filler){
             bind(aux_gy,f_c,_1,_2));
         
         i_c.convertTo(is[i],CV_8U);
+        
+//        break;
     }
     
     merge(is,img);
