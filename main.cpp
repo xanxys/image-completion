@@ -21,7 +21,6 @@ using namespace std;
 using namespace boost;
 namespace fs=boost::filesystem;
 
-#define foreach BOOST_FOREACH
 #define SET_MEMBER(v,s) ((s).find(v)!=(s).end())
 
 vector<int> random_subset(boost::mt19937& rng,int n,int k){
@@ -32,55 +31,14 @@ vector<int> random_subset(boost::mt19937& rng,int n,int k){
     }
 }
 
+template<typename K>
+bool comparing_values_in(vector<K>& vs,int i,int j){
+    return vs[i]<vs[j];
+}
+
 const char* start_bold="\x1b[1;31;49m";
 const char* end_bold="\x1b[0;0;0m";
 
-// match two sets of descriptors and gives average feature distance
-vector<pair<int,int>> match_descriptors(Mat& s,Mat& t,double& score){
-    const int sn=s.size().height;
-    const int tn=t.size().height;
-
-    cout<<"matching: "<<sn<<" - "<<tn<<endl;
-    
-    // construct precursor of bijection s<->t
-    vector<pair<int,int>> pairs;
-    set<int> exist_ti,bad_ti;
-    
-    for(int si=0;si<sn;si++){
-        // find minimum
-        double md=1e100;
-        int mi=-1;
-        for(int ti=0;ti<tn;ti++){
-            double d=norm(s.row(si),t.row(ti));
-            if(d<md){
-                md=d;
-                mi=ti;
-            }
-        }
-        
-        if(SET_MEMBER(mi,exist_ti)) bad_ti.insert(mi);
-        exist_ti.insert(mi);
-        pairs.push_back(pair<int,int>(si,mi));
-    }
-    
-    // delete pairs with duplicated t index
-    vector<pair<int,int>> pairs_ok;
-    for(vector<pair<int,int>>::iterator it=pairs.begin();it!=pairs.end();++it)
-        if(!SET_MEMBER(it->second,bad_ti))
-            pairs_ok.push_back(*it);
-    
-    // calculate score
-    double sc=0;
-    for(vector<pair<int,int>>::iterator it=pairs_ok.begin();it!=pairs_ok.end();++it)
-        sc+=norm(s.row(it->first),t.row(it->second));
-    
-    score=sc/pairs_ok.size();
-    
-    
-    cout<<">"<<pairs_ok.size()<<" pairs established / score="<<score<<endl;
-    
-    return pairs_ok;
-}
 
 const int dim_descriptor=288;
 
@@ -179,240 +137,6 @@ Mat image_descriptor(Mat& img){
     return m;
 }
 
-
-
-
-void compose_directory(fs::path p,fs::path q){
-    // load all images
-    vector<Mat> imgs;
-    
-    fs::directory_iterator end;
-    for(fs::directory_iterator it(p);it!=end;++it){
-        cout<<"loading "<<*it<<" : ";
-        Mat img=imread(it->string());
-        cout<<img.size().width<<"*"<<img.size().height<<endl;
-        imgs.push_back(img);
-    }
-    
-    
-    // detect features
-    cout<<"detecting features..."<<endl;
-    
-    Ptr<FeatureDetector> detector=GoodFeaturesToTrackDetector::create("SURF"); // new SurfFeatureDetector(1e3);
-    vector<vector<KeyPoint>> kpss;
-    detector->detect(imgs,kpss);
-    
-    // calculate descriptors
-    cout<<"calculating descriptors..."<<endl;
-    
-    Ptr<DescriptorExtractor> extractor=DescriptorExtractor::create("SURF");
-    vector<Mat> ds;
-    extractor->compute(imgs,kpss,ds);
-
-    // match images / construct feature point graph
-    cout<<"matching descriptors..."<<endl;
-    
-    typedef property<vertex_name_t,pair<int,int>> VertexProperty;
-    typedef adjacency_list<vecS,vecS,undirectedS,VertexProperty> Graph;
-    typedef graph_traits<Graph>::vertex_descriptor Vertex;
-    
-    const int n=imgs.size();
-    if(n!=2) return;
-    
-    Graph g;
-    
-    // register vertices
-    vector<vector<Vertex>> vss;
-    for(int i=0;i<n;i++){
-        vector<Vertex> vs;
-        for(int j=0;j<kpss[i].size();j++)
-            vs.push_back(add_vertex(pair<int,int>(i,j),g));
-        vss.push_back(vs);
-    }
-    
-    // register edges
-    for(int i=0;i<n;i++){
-        for(int j=i+1;j<n;j++){
-            double dist;
-            vector<pair<int,int>> ls=match_descriptors(ds[i],ds[j],dist);
-            
-            pair<int,int> p;
-            foreach(p,ls){
-                add_edge(vss[i][p.first],vss[j][p.second],g);
-            }
-        }
-    }
-    
-    // compute CCs and filter them
-    cout<<"constructing descriptor hypergraph..."<<endl;
-    
-    vector<int> comp(num_vertices(g));
-    int ncc=connected_components(g,&comp[0]);
-    
-    cout<<">"<<ncc<<" CCs found"<<endl;
-    
-    vector<vector<pair<int,int>>> features(ncc);
-    for(int i=0;i<num_vertices(g);i++){
-
-        features[comp[i]].push_back(get(vertex_name,g,i));
-    }
-    
-    vector<vector<pair<int,int>>> features_good;
-    for(int i=0;i<ncc;i++){
-        vector<pair<int,int>>& x=features[i];
-        if(x.size()<2) continue; // isolated
-        
-        vector<bool> ex(n);
-        for(int j=0;j<x.size();j++){
-            if(ex[x[j].first]) goto end_loop; // inconsistent
-            ex[x[j].first]=true;
-        }
-        
-        features_good.push_back(features[i]);
-    end_loop:
-        continue;
-    }
-
-    cout<<">"<<features_good.size()<<" good CCs found"<<endl;
-    vector<Point2f> srcs,dsts;
-    
-    for(int i=0;i<features_good.size();i++){
-        vector<pair<int,int>>& fs=features_good[i];
-        if(fs.size()!=2 || fs[0].first==fs[1].first){
-            cerr<<"unexpected thing happened"<<endl;
-            return;
-        }
-        
-        if(fs[0].first==0)
-            srcs.push_back(kpss[0][fs[0].second].pt);
-        else
-            dsts.push_back(kpss[1][fs[0].second].pt);
-        
-        if(fs[1].first==0)
-            srcs.push_back(kpss[0][fs[1].second].pt);
-        else
-            dsts.push_back(kpss[1][fs[1].second].pt);
-    }
-    
-    
-    // visualize feature
-    int wmax=0;
-    int hsum=0;
-    for(int i=0;i<n;i++){
-        wmax=(wmax>imgs[i].size().width)?wmax:imgs[i].size().width;
-        hsum+=imgs[i].size().height;
-    }
-    
-    Mat vis(hsum,wmax,CV_8UC3);
-    int yaccum=0;
-    
-    vector<int> ydelta;
-    for(int i=0;i<n;i++){
-        int h=imgs[i].size().height;
-        int w=imgs[i].size().width;
-        
-        Mat dm=vis(Range(yaccum,yaccum+h),Range(0,w));
-        imgs[i].copyTo(dm);
-        
-        ydelta.push_back(yaccum);
-        yaccum+=h;
-    }
-    
-    for(int i=0;i<features_good.size();i++){
-        vector<pair<int,int>>& fs=features_good[i];
-        
-        for(int j=0;j<fs.size();j++){
-            KeyPoint& kp=kpss[fs[j].first][fs[j].second];
-            circle(vis,kp.pt+Point2f(0,ydelta[fs[j].first]),10,0);
-        }
-        
-        line(vis,srcs[i],dsts[i]+Point2f(0,ydelta[1]),0);
-    }
-    
-    imwrite("vis.jpeg",vis);
-    
-
-    // use RANSAC (k=3)
-    boost::mt19937 rng;
-    
-
-    
-    const int m=srcs.size();
-    const int n_trial=2000;
-    const int k_sample=4;
-    const int epsilon=3;
-    
-    double e_best=1e100;
-    Mat m_best;
-    
-    cout<<"RANSAC"<<endl;
-    for(int i=0;i<n_trial;i++){
-        vector<int> is=random_subset(rng,m,k_sample);
-        
-        Point2f ss[k_sample],ds[k_sample];
-        for(int j=0;j<k_sample;j++){
-            ss[j]=srcs[is[j]];
-            ds[j]=dsts[is[j]];
-        }
-        
-        Mat m_sd=getPerspectiveTransform(ss,ds);
-        
-        // eval
-        double e=0;
-        for(int j=0;j<m;j++){
-            Mat ss_ext=Mat(3,1,CV_64F);
-            ss_ext.at<double>(0)=srcs[j].x;
-            ss_ext.at<double>(1)=srcs[j].y;
-            ss_ext.at<double>(2)=1;
-            
-            Mat ds_cv=Mat(2,1,CV_64F);
-            ds_cv.at<double>(0)=dsts[j].x;
-            ds_cv.at<double>(1)=dsts[j].y;
-            
-            Mat s_proj=m_sd*ss_ext;
-            Mat s_nhom=Mat(2,1,CV_64F);
-            s_nhom.at<double>(0)=s_proj.at<double>(0)/s_proj.at<double>(2);
-            s_nhom.at<double>(1)=s_proj.at<double>(1)/s_proj.at<double>(2);
-            
-            // e+=pow(norm(m_sd*ss_ext,ds_cv),1);
-            if(norm(s_nhom,ds_cv)>epsilon) e++;
-        }
-        
-        // update
-        if(e<e_best){
-            e_best=e;
-            m_sd.copyTo(m_best);
-        }
-        
-        cout<<">>iter:"<<i<<"  /  e="<<e<<endl;
-    }
-    
-    cout<<">final error="<<e_best<<endl;
-    
-    
-    Mat fin(imgs[1]);
-    
-    warpPerspective(imgs[0],fin,m_best,fin.size(),INTER_LINEAR,BORDER_TRANSPARENT);
-    
-    
-    
-    imwrite(q.string(),fin);
-    
-    
-
-    /*
-    Mat srcpt(srcs),dstpt(dsts);
-    
-    cout<<srcpt<<"=----------------------------="<<endl<<dstpt<<endl;
-    
-//    Mat aff=estimateRigidTransform(srcpt,dstpt,true);
-    cout<<"affined transform:"<<aff<<endl;
-    
-    warpAffine(imgs[0],imgs[1],aff,Size(2000,2000));
-    
-    imwrite("aff-cmp.jpeg",imgs[1]);
-    */
-}
 
 
 void write_descriptor_text(ostream& os,Mat& desc){
@@ -537,13 +261,48 @@ IndexWeight load_index_weight(){
 
 
 
-
-
-
-template<typename K>
-bool comparing_values_in(vector<K>& vs,int i,int j){
-    return vs[i]<vs[j];
+#if 0
+// solve linear equation mv=u w/ Jacobi method.
+// m must be diagonally dominant
+void solve_jacobi(SparseMat& m,Mat& v,Mat& u){
+    cout<<"Jacobi method"<<endl;
+    
+    const int n=m.size(0);
+    
+    assert(m.size(1)==n && v.rows==n && v.cols==1);
+    
+    // initial estimate
+    u=Mat(n,1,CV_32F,Scalar(1));
+    
+    // iterate
+    Mat x(n,1,CV_32F);
+    
+    while(true){
+        float error=0;
+        
+        for(int i=0;i<n;i++){
+            float s=0;
+            for(int j=0;j<n;j++)
+                if(i!=j)
+                    s+=m.value<float>(i,j)*u.at<float>(j);
+            
+            float new_x=(v.at<float>(i)-s)/m.value<float>(i,i);
+            float& old_x=x.at<float>(i);
+            
+            error+=abs(new_x-old_x);
+            old_x=new_x;
+        }
+        
+        x.copyTo(u);
+        
+        cout<<"iter: "<<error<<endl;
+    }
 }
+#endif
+
+
+
+
 
 vector<string> search_image(vector<pair<Mat,string>>& index,Mat& query,int n){
     vector<float> ds;
@@ -563,6 +322,147 @@ vector<string> search_image(vector<pair<Mat,string>>& index,Mat& query,int n){
         ss.push_back(index[is[i]].second);
     
     return ss;
+}
+
+
+// src must be defined in 1px boundary around mask
+// grad_x(x,y):=f(x+1,y)-f(x,y), likewise for grad_y
+void gradient_transfer(
+    Mat& dst,Mat& mask,
+    function<float(int,int)> src,
+    function<float(int,int)> grad_x,
+    function<float(int,int)> grad_y){
+    
+    const int n=countNonZero(mask);
+    const int size[]={n,n};
+    
+    const int w=dst.size().width;
+    const int h=dst.size().height;
+    
+    // constraint
+    Mat sl(h,w,CV_32F),k(h,w,CV_32F);
+    
+    for(int y=0;y<h;y++){
+        for(int x=0;x<w;x++){
+            if(mask.at<uint8_t>(y,x)==0) continue;
+            
+            int ys[]={y-1,y,y,y+1};
+            int xs[]={x,x-1,x+1,x};
+            
+            int ns=0;
+            float vs=0;
+            for(int i=0;i<4;i++){
+                int xc=xs[i],yc=ys[i];
+                if(xc<0 || xc>=w || yc<0 || yc>=h) continue;
+                if(mask.at<uint8_t>(yc,xc)==0) vs+=src(xc,yc);
+                
+                if(xc==x){
+                    if(yc<y)
+                        vs-=grad_y(x,yc);
+                    else
+                        vs+=grad_y(x,y);
+                }
+                else{
+                    if(xc<x)
+                        vs-=grad_x(xc,y);
+                    else
+                        vs+=grad_x(x,y);
+                }
+                
+                ns++;
+            }
+            
+            k.at<float>(y,x)=1.0/ns;
+            sl.at<float>(y,x)=vs;
+        }
+    }
+    
+    imwrite("aux-bnd.jpg",k);
+    imwrite("aux-vec.jpg",sl);
+    
+//    cout<<sl<<endl<<k<<endl;
+    
+    // solve iteratively
+    Mat dst_temp(dst);
+    
+    while(true){
+        float err=0;
+        
+        for(int y=0;y<h;y++)
+            for(int x=0;x<w;x++)
+                if(mask.at<uint8_t>(y,x)>0){
+                    float vs=sl.at<float>(y,x)*1.001;
+                    
+                    if(x>=1 && mask.at<uint8_t>(y,x-1)>0)
+                        vs+=dst.at<float>(y,x-1);
+                    if(y>=1 && mask.at<uint8_t>(y-1,x)>0)
+                        vs+=dst.at<float>(y-1,x);
+                    if(x<w-1 && mask.at<uint8_t>(y,x+1)>0)
+                        vs+=dst.at<float>(y,x+1);
+                    if(y<h-1 && mask.at<uint8_t>(y+1,x)>0)
+                        vs+=dst.at<float>(y+1,x);
+                    
+                    vs*=k.at<float>(y,x)/1.001;
+                    
+                    err+=abs(dst.at<float>(y,x)-vs);
+                    dst_temp.at<float>(y,x)=vs;
+                }
+        
+        dst_temp.copyTo(dst);
+        cout<<"iter: "<<err<<endl;
+        if(err<1) break;
+    }
+    
+}
+
+float aux_ref(Mat& m,int x,int y){
+    return m.at<float>(y,x);
+}
+
+float aux_gx(Mat& m,int x,int y){
+    return m.at<float>(y,x+1)-m.at<float>(y,x);
+}
+
+float aux_gy(Mat& m,int x,int y){
+    return m.at<float>(y+1,x)-m.at<float>(y,x);
+}
+
+void blend_images(Mat& img,Mat& mask,Mat& filler){
+    // enlarge filler to cover img
+    float a_i=1.0*img.size().width/img.size().height;
+    float a_f=1.0*filler.size().width/filler.size().height;
+    float s=1;
+    
+    if(a_i>a_f)
+        s=1.0*img.size().width/filler.size().width;
+    else
+        s=1.0*img.size().height/filler.size().height;
+    
+    Mat m;
+    resize(filler,m,Size(),s,s);
+    
+    // seamless cloning
+    vector<Mat> is;
+    vector<Mat> fs;
+    split(img,is);
+    split(m,fs);
+    
+    assert(is.size()==fs.size());
+    for(int i=0;i<is.size();i++){
+        Mat i_c,f_c;
+        is[i].convertTo(i_c,CV_32F);
+        fs[i].convertTo(f_c,CV_32F);
+        
+        gradient_transfer(
+            i_c,mask,
+            bind(aux_ref,i_c,_1,_2),
+            bind(aux_gx,i_c,_1,_2),
+            bind(aux_gy,i_c,_1,_2));
+        
+        i_c.convertTo(is[i],CV_8U);
+    }
+    
+    merge(is,img);
 }
 
 
@@ -594,6 +494,29 @@ int main(int argc,char *argv[]){
         }
         else if(command=="load"){
             index=load_index_gist();
+        }
+        else if(command=="blend"){
+            /*
+            string d,dm,s;
+            cout<<"image w/ hole?"<<flush;
+            getline(cin,d);
+            cout<<"image mask?"<<flush;
+            getline(cin,dm);
+            cout<<"filler image?"<<flush;
+            getline(cin,s);
+            */
+            string
+                d="hill.jpg",
+                dm="hill_mask.jpg",
+                s="hill_dual.jpeg";
+            
+            Mat id=imread(d);
+            Mat idm=imread(dm,0);
+            Mat is=imread(s);
+            
+            blend_images(id,idm,is);
+            
+            imwrite("b-"+d,id);
         }
         else if(command=="query"){
             int n;
