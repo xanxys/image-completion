@@ -1,0 +1,10 @@
+#!/bin/env fish
+
+echo "load" > msg
+echo "dump.gist" >> msg
+echo "q" >> msg
+cat msg | ./complete
+R -f visualize_db_features.R
+montage -geometry +2+2 naive.png PCA.png space.png
+rm -f msg naive.png PCA.png naive.table PCA.table
+
