@@ -261,49 +261,6 @@ IndexWeight load_index_weight(){
 
 
 
-#if 0
-// solve linear equation mv=u w/ Jacobi method.
-// m must be diagonally dominant
-void solve_jacobi(SparseMat& m,Mat& v,Mat& u){
-    cout<<"Jacobi method"<<endl;
-    
-    const int n=m.size(0);
-    
-    assert(m.size(1)==n && v.rows==n && v.cols==1);
-    
-    // initial estimate
-    u=Mat(n,1,CV_32F,Scalar(1));
-    
-    // iterate
-    Mat x(n,1,CV_32F);
-    
-    while(true){
-        float error=0;
-        
-        for(int i=0;i<n;i++){
-            float s=0;
-            for(int j=0;j<n;j++)
-                if(i!=j)
-                    s+=m.value<float>(i,j)*u.at<float>(j);
-            
-            float new_x=(v.at<float>(i)-s)/m.value<float>(i,i);
-            float& old_x=x.at<float>(i);
-            
-            error+=abs(new_x-old_x);
-            old_x=new_x;
-        }
-        
-        x.copyTo(u);
-        
-        cout<<"iter: "<<error<<endl;
-    }
-}
-#endif
-
-
-
-
-
 vector<string> search_image(vector<pair<Mat,string>>& index,Mat& query,int n){
     vector<float> ds;
     vector<int> is;
@@ -358,15 +315,15 @@ void gradient_transfer(
                 
                 if(xc==x){
                     if(yc<y)
-                        vs-=grad_y(x,yc);
+                        vs+=grad_y(x,yc);
                     else
-                        vs+=grad_y(x,y);
+                        vs-=grad_y(x,y);
                 }
                 else{
                     if(xc<x)
-                        vs-=grad_x(xc,y);
+                        vs+=grad_x(xc,y);
                     else
-                        vs+=grad_x(x,y);
+                        vs-=grad_x(x,y);
                 }
                 
                 ns++;
@@ -377,14 +334,7 @@ void gradient_transfer(
         }
     }
     
-    imwrite("aux-bnd.jpg",k);
-    imwrite("aux-vec.jpg",sl);
-    
-//    cout<<sl<<endl<<k<<endl;
-    
     // solve iteratively
-    Mat dst_temp(dst);
-    
     float err_prev=1e100;
     while(true){
         float omega=1.9;
@@ -393,7 +343,7 @@ void gradient_transfer(
         for(int y=0;y<h;y++)
             for(int x=0;x<w;x++)
                 if(mask.at<uint8_t>(y,x)>0){
-                    float vs=sl.at<float>(y,x)*1.001;
+                    float vs=sl.at<float>(y,x);
                     
                     if(x>=1 && mask.at<uint8_t>(y,x-1)>0)
                         vs+=dst.at<float>(y,x-1);
@@ -404,7 +354,7 @@ void gradient_transfer(
                     if(y<h-1 && mask.at<uint8_t>(y+1,x)>0)
                         vs+=dst.at<float>(y+1,x);
                     
-                    vs*=k.at<float>(y,x)/1.001;
+                    vs*=k.at<float>(y,x);
                     
                     // successive over-relaxation
                     float vs_old=dst.at<float>(y,x);
@@ -414,7 +364,6 @@ void gradient_transfer(
                     err+=abs(vs_old-vs);
                 }
         
-//        dst_temp.copyTo(dst);
         cout<<"iter: "<<err<<endl;
         if(err>err_prev && err<100) break;
         
@@ -464,8 +413,8 @@ void blend_images(Mat& img,Mat& mask,Mat& filler){
         gradient_transfer(
             i_c,mask,
             bind(aux_ref,i_c,_1,_2),
-            bind(aux_gx,i_c,_1,_2),
-            bind(aux_gy,i_c,_1,_2));
+            bind(aux_gx,f_c,_1,_2),
+            bind(aux_gy,f_c,_1,_2));
         
         i_c.convertTo(is[i],CV_8U);
     }
