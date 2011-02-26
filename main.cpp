@@ -285,11 +285,10 @@ vector<Mat> create_pyramid(Mat m,int n,float exponent=0){
     vector<Mat> pyr;
     
     for(int i=0;i<n;i++){
-        pyr.insert(pyr.begin(),m);
+        pyr.push_back(m);
         
         Mat t;
         resize(m,t,Size(),0.5,0.5,INTER_LINEAR);
-        
 
         m=t*pow(2,exponent);
     }
@@ -309,16 +308,15 @@ void gradient_transfer(
     const int h0=dst0.size().height;
     
     // constraint
-    Mat sl(h0,w0,CV_32F),k(h0,w0,CV_32F);
+    Mat sl0(h0,w0,CV_32F),inv_diag0(h0,w0,CV_32F);
     
     for(int y=0;y<h0;y++){
         for(int x=0;x<w0;x++){
             if(mask0.at<uint8_t>(y,x)==0){
-                k.at<float>(y,x)=0;
-                sl.at<float>(y,x)=0;
+                inv_diag0.at<float>(y,x)=0;
+                sl0.at<float>(y,x)=0;
             }
             else{
-                
                 int ys[]={y-1,y,y,y+1};
                 int xs[]={x,x-1,x+1,x};
                 
@@ -345,33 +343,37 @@ void gradient_transfer(
                     ns++;
                 }
                 
-                k.at<float>(y,x)=1.0/ns;
-                sl.at<float>(y,x)=vs;
+                inv_diag0.at<float>(y,x)=1.0/ns;
+                sl0.at<float>(y,x)=vs;
             }
         }
     }
     
-    // solve iteratively
-    const int levels=1;
+    const bool true_solution=true;
+    
+    // true: Gauss-Seidel + over-relaxation (very slow)
+    // non-true: multigrid (experimental, buggy, very fast)
+    
+    const int levels=true_solution?1:5;
     
     vector<Mat>
         pyr_mask=create_pyramid(mask0,levels),
-        pyr_dst=create_pyramid(dst0,levels),
-        pyr_sl=create_pyramid(sl,levels,1),
-        pyr_k=create_pyramid(k,levels,0);
+        pyr_inv_diag=create_pyramid(inv_diag0,levels,0);
     
-    //    const int n=countNonZero(mask0);
+    vector<Mat> pyr_dst,pyr_res;
+    
+    // fine -> coarse
+    Mat sl(sl0);
+    Mat dst(dst0);
     
     for(int l=0;l<levels;l++){
         cout<<"level: "<<l<<endl;
         
         Mat& mask=pyr_mask[l];
-        Mat& dst=pyr_dst[l];
-        Mat& sl=pyr_sl[l];
-        Mat& k=pyr_k[l];
+        Mat& inv_diag=pyr_inv_diag[l];
         
-        int w=pyr_dst[l].size().width;
-        int h=pyr_dst[l].size().height;
+        int w=dst.size().width;
+        int h=dst.size().height;
         
         float err_prev=1e100;
         int n_iter=0;
@@ -394,7 +396,7 @@ void gradient_transfer(
                         if(y<h-1 && mask.at<uint8_t>(y+1,x)>0)
                             vs+=dst.at<float>(y+1,x);
                         
-                        vs*=k.at<float>(y,x);
+                        vs*=inv_diag.at<float>(y,x);
                         
                         // successive over-relaxation
                         float vs_old=dst.at<float>(y,x);
@@ -405,20 +407,27 @@ void gradient_transfer(
                     }
             
             cout<<"iter: "<<err<<endl;
-            if(n_iter++>100) break;
-            if(err>err_prev && err<100) break;
+            
+            if(true_solution){
+                if(err>err_prev && err<100) break;
+            }
+            else{
+                if(n_iter++>100) break;
+            }
             
             err_prev=err;
         }
         
-        // error vector generation
-        Mat err_vect;
-        dst.copyTo(err_vect);
+        pyr_dst.push_back(dst);
+        
+        // residue calculation
+        Mat res;
+        dst.copyTo(res);
         
         for(int y=0;y<h;y++)
             for(int x=0;x<w;x++)
                 if(mask.at<uint8_t>(y,x)>0){
-                    float vs=dst.at<float>(y,x)/k.at<float>(y,x);
+                    float vs=dst.at<float>(y,x)/inv_diag.at<float>(y,x);
                     
                     if(x>=1 && mask.at<uint8_t>(y,x-1)>0)
                         vs-=dst.at<float>(y,x-1);
@@ -430,28 +439,42 @@ void gradient_transfer(
                         vs-=dst.at<float>(y+1,x);
                     
 
-                    err_vect.at<float>(y,x)=vs-sl.at<float>(y,x);
+                    res.at<float>(y,x)=sl.at<float>(y,x)-vs;
                 }
                 else
-                    err_vect.at<float>(y,x)=0;
+                    res.at<float>(y,x)=0;
+        
+        pyr_res.push_back(res);
         
         // scaling
         if(l<levels-1){
-            Mat temp;
-            resize(dst,temp,pyr_dst[l+1].size());
+            Mat res_;
+            resize(res,res_,Size(),0.5,0.5);
             
-            temp.copyTo(pyr_dst[l+1],pyr_mask[l+1]);
+            sl=res_;
+            sl.copyTo(dst);
         }
-        else
-            dst.copyTo(dst0);
             
         ostringstream os;
         os<<"aux-MG-lv-"<<l<<".jpeg";
         imwrite(os.str(),dst);
 
-        imwrite("err-"+os.str(),0.1*err_vect.size().area()*abs(err_vect)/norm(err_vect));
+        imwrite("res-"+os.str(),0.1*res.size().area()*abs(res)/norm(res));
     }
     
+    // coarse -> fine
+    for(int l=levels-2;l>=0;l--){
+        Mat d_;
+        resize(pyr_dst[l+1],d_,pyr_dst[l].size());
+        
+        pyr_dst[l]+=d_*4;
+
+        ostringstream os;
+        os<<"dst-MG-lv-"<<l<<".jpeg";
+        imwrite(os.str(),pyr_dst[l]);
+    }
+    
+    pyr_dst[0].copyTo(dst);
 }
 
 float aux_ref(Mat& m,int x,int y){
