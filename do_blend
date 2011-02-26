@@ -1,0 +1,10 @@
+#!/bin/env fish
+
+echo "blend" > msg
+echo "hill.jpg" >> msg
+echo "hill_mask.jpg" >> msg
+echo "hill_dual.jpeg" >> msg
+echo "q" >> msg
+cat msg | ./complete
+rm -f msg
+

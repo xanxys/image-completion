@@ -537,7 +537,6 @@ int main(int argc,char *argv[]){
             index=load_index_gist();
         }
         else if(command=="blend"){
-            /*
             string d,dm,s;
             cout<<"image w/ hole?"<<flush;
             getline(cin,d);
@@ -545,11 +544,6 @@ int main(int argc,char *argv[]){
             getline(cin,dm);
             cout<<"filler image?"<<flush;
             getline(cin,s);
-            */
-            string
-                d="hill.jpg",
-                dm="hill_mask.jpg",
-                s="hill_dual.jpeg";
             
             Mat id=imread(d);
             Mat idm=imread(dm,0);
