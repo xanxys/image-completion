@@ -385,7 +385,9 @@ void gradient_transfer(
     // solve iteratively
     Mat dst_temp(dst);
     
+    float err_prev=1e100;
     while(true){
+        float omega=1.9;
         float err=0;
         
         for(int y=0;y<h;y++)
@@ -404,13 +406,19 @@ void gradient_transfer(
                     
                     vs*=k.at<float>(y,x)/1.001;
                     
-                    err+=abs(dst.at<float>(y,x)-vs);
-                    dst_temp.at<float>(y,x)=vs;
+                    // successive over-relaxation
+                    float vs_old=dst.at<float>(y,x);
+                    vs=(1-omega)*vs_old+omega*vs;
+                    dst.at<float>(y,x)=vs;
+                                        
+                    err+=abs(vs_old-vs);
                 }
         
-        dst_temp.copyTo(dst);
+//        dst_temp.copyTo(dst);
         cout<<"iter: "<<err<<endl;
-        if(err<1) break;
+        if(err>err_prev && err<100) break;
+        
+        err_prev=err;
     }
     
 }
