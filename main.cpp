@@ -509,17 +509,38 @@ void blend_images(Mat& img,Mat& mask,Mat& filler){
     // enlarge filler to cover img
     float a_i=1.0*img.size().width/img.size().height;
     float a_f=1.0*filler.size().width/filler.size().height;
-    float s=1;
     
-    if(a_i>a_f)
-        s=1.0*img.size().width/filler.size().width;
-    else
-        s=1.0*img.size().height/filler.size().height;
+    Mat m;    
+    if(a_i>a_f){
+        float s=1.0*img.size().width/filler.size().width;
+        resize(filler,m,Size(),s,s);
+        
+        float dh_half=(m.size().height-img.size().height)/2;
+        m=Mat(m,Rect(Size(0,dh_half),img.size()));
+    }
+    else{
+        float s=1.0*img.size().height/filler.size().height;
+        resize(filler,m,Size(),s,s);
+        
+        float dv_half=(m.size().width-img.size().width)/2;
+        m=Mat(m,Rect(Size(dv_half,0),img.size()));
+    }
     
-    Mat m;
-    resize(filler,m,Size(),s,s);
+    assert(img.size()==m.size());
+    
+    
+    // find optimal seam
+    Mat s(3,3,CV_32S),
+        t(3,3,CV_32S),
+        x(2,2,CV_32S),
+        y(2,2,CV_32S);
+    optimize_seam(s,t,x,y);
+    
+    
     
     // seamless cloning
+    const bool use_cloning=true;
+    
     vector<Mat> is;
     vector<Mat> fs;
     split(img,is);
@@ -531,8 +552,7 @@ void blend_images(Mat& img,Mat& mask,Mat& filler){
         is[i].convertTo(i_c,CV_32F);
         fs[i].convertTo(f_c,CV_32F);
         
-        // seamless cloning or mixing gradient
-        if(true){
+        if(use_cloning){
             gradient_transfer(
                 i_c,mask,
                 bind(aux_ref,i_c,_1,_2),
@@ -553,7 +573,29 @@ void blend_images(Mat& img,Mat& mask,Mat& filler){
     merge(is,img);
 }
 
-
+void change_color(Mat& img,Mat& mask){
+    Mat L;
+    cvtColor(img,L,CV_RGB2GRAY);
+    
+    vector<Mat> is;
+    split(img,is);
+    
+    for(int i=0;i<is.size();i++){
+        Mat l_c,i_c;
+        L.convertTo(l_c,CV_32F);
+        is[i].convertTo(i_c,CV_32F);
+        
+        gradient_transfer(
+            l_c,mask,
+            bind(aux_ref,l_c,_1,_2),
+            bind(aux_gx,i_c,_1,_2),
+            bind(aux_gy,i_c,_1,_2));
+        
+        l_c.convertTo(is[i],CV_8U);
+    }
+    
+    merge(is,img);
+}
 
 // parse argument and pass configuration to the composition function
 int main(int argc,char *argv[]){
