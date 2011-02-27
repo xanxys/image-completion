@@ -10,9 +10,13 @@
 #include <boost/filesystem/path.hpp>
 #include <boost/filesystem/operations.hpp>
 #include <boost/random/mersenne_twister.hpp>
-#include <boost/graph/graph_traits.hpp>
+#include <boost/graph/edge_list.hpp>
 #include <boost/graph/adjacency_list.hpp>
-#include <boost/graph/connected_components.hpp>
+#include <boost/graph/graph_traits.hpp>
+#include <boost/graph/graph_utility.hpp>
+// #include <boost/graph/edmonds_karp_max_flow.hpp>
+// #include <boost/graph/push_relabel_max_flow.hpp>
+#include <boost/graph/kolmogorov_max_flow.hpp>
 #include <opencv/cv.h>
 #include <opencv/highgui.h>
 
@@ -296,6 +300,121 @@ vector<Mat> create_pyramid(Mat m,int n,float exponent=0){
     return pyr;
 }
 
+
+// CV_32S
+// s.size==t.size
+// ex.size==ey.size is smaller than s.size by (1,1)
+Mat optimize_seam(Mat& s,Mat& t,Mat& exf,Mat& eyf,Mat& exb,Mat& eyb){
+    typedef adjacency_list_traits<vecS,vecS,directedS> Traits;
+/*
+    typedef adjacency_list<vecS,vecS,directedS,
+        property<vertex_name_t,string,
+            property<vertex_index_t,long>>,
+        property<edge_capacity_t,long,
+            property<edge_residual_capacity_t,long,
+                property<edge_reverse_t,Traits::edge_descriptor>>>> Graph;
+*/
+  typedef adjacency_list < vecS, vecS, directedS,
+    property < vertex_name_t, std::string,
+    property < vertex_index_t, long,
+    property < vertex_color_t, boost::default_color_type,
+    property < vertex_distance_t, long,
+    property < vertex_predecessor_t, Traits::edge_descriptor > > > > >,
+    
+    property < edge_capacity_t, long,
+    property < edge_residual_capacity_t, long,
+    property < edge_reverse_t, Traits::edge_descriptor > > > > Graph;
+    
+    const int w=s.size().width;
+    const int h=s.size().height;
+    
+    // construct graph
+    int vs=w*h;
+    int vt=w*h+1;
+
+    Graph g(w*h+2);
+        
+    property_map<Graph,edge_reverse_t>::type reverse_edge = get(edge_reverse, g);
+    property_map<Graph,edge_residual_capacity_t>::type residual_capacity = get(edge_residual_capacity, g);
+    property_map<Graph,edge_capacity_t>::type capacity=get(edge_capacity,g);
+
+    for(int y=0;y<h;y++){
+        for(int x=0;x<w;x++){
+            typedef pair<pair<int,int>,pair<int,int>> EdgeInfo;
+            vector<EdgeInfo> edges;
+            
+            int v=y*w+x;
+            int vx=v+1;
+            int vy=v+w;
+            
+            edges.push_back(EdgeInfo(pair<int,int>(vs,v),pair<int,int>(s.at<int32_t>(y,x),0)));
+            edges.push_back(EdgeInfo(pair<int,int>(v,vt),pair<int,int>(t.at<int32_t>(y,x),0)));
+            
+            if(x<w-1)
+                edges.push_back(EdgeInfo(pair<int,int>(v,vx),pair<int,int>(exf.at<int32_t>(y,x),exb.at<int32_t>(y,x))));
+            if(y<h-1)
+                edges.push_back(EdgeInfo(pair<int,int>(v,vy),pair<int,int>(eyf.at<int32_t>(y,x),eyb.at<int32_t>(y,x))));
+            
+            for(auto it=edges.begin();it!=edges.end();++it){
+                int u=it->first.first;
+                int v=it->first.second;
+                int capf=it->second.first;
+                int capb=it->second.second;
+                
+                Traits::edge_descriptor e1,e2;
+                e1=add_edge(u,v,g).first;
+                e2=add_edge(v,u,g).first;
+                
+                reverse_edge[e1]=e2;
+                reverse_edge[e2]=e1;
+                
+                capacity[e1]=capf;
+                capacity[e2]=capb;
+                
+                residual_capacity[e1]=capf;
+                residual_capacity[e2]=capb;
+            }
+        }
+    }
+
+    
+    cout<<"graph constructed"<<endl;
+    
+    long flow=kolmogorov_max_flow(g,vs,vt);
+//    long flow=edmonds_karp_max_flow(g,vs,vt);
+    cout<<"max flow:"<<flow<<endl;
+    
+    
+    Mat mask(h,w,CV_8U);
+    
+    graph_traits < Graph >::out_edge_iterator ei,e_end;
+    for(tie(ei, e_end) = out_edges(vs, g); ei != e_end; ++ei){
+    //    cout<<"  RCap:"<<residual_capacity[*ei]<<"  Cap:"<<capacity[*ei]<<endl;
+        
+        int v=target(*ei,g);
+
+        int x=v%w;
+        int y=v/w;
+        
+        
+        Traits::edge_descriptor en=edge(v,vt,g).first;
+        
+//        cout<<x<<","<<y<<": "<<residual_capacity[*ei]<<" "<<residual_capacity[en]<<endl;
+        
+        
+//        cout<<residual_capacity[*ei]<<endl;
+
+        if(residual_capacity[*ei]==0) // capacity[*ei])
+            mask.at<uint8_t>(y,x)=255;
+        else
+            mask.at<uint8_t>(y,x)=0;
+
+    }
+
+    return mask;
+}
+
+
 // src must be defined in 1px boundary around mask
 // grad_x(x,y):=f(x+1,y)-f(x,y), likewise for grad_y
 void gradient_transfer(
@@ -528,14 +647,84 @@ void blend_images(Mat& img,Mat& mask,Mat& filler){
     
     assert(img.size()==m.size());
     
+    const int w=img.size().width;
+    const int h=img.size().height;
+    
     
     // find optimal seam
-    Mat s(3,3,CV_32S),
-        t(3,3,CV_32S),
-        x(2,2,CV_32S),
-        y(2,2,CV_32S);
-    optimize_seam(s,t,x,y);
+    Mat s(h,w,CV_32S),
+        t(h,w,CV_32S),
+        exf(h,w-1,CV_32S),
+        exb(h,w-1,CV_32S),
+        eyf(h-1,w,CV_32S),
+        eyb(h-1,w,CV_32S);
     
+    Mat inv_mask=255-mask;
+    
+    Mat ext_mask;
+    dilate(mask,ext_mask,Mat());
+    ext_mask=ext_mask<=mask;
+    
+    Mat dist,dist_bnd;
+    distanceTransform(inv_mask,dist,CV_DIST_L2,3);
+    distanceTransform(ext_mask,dist_bnd,CV_DIST_L2,3);
+    
+    imwrite("aux-dist0.jpeg",dist);
+    imwrite("aux-dist1.jpeg",dist_bnd);
+    
+    Mat imgfx,mfx;
+    cvtColor(img,imgfx,CV_RGB2Lab);
+    cvtColor(m,mfx,CV_RGB2Lab);
+    
+    Mat imgf,mf;
+    imgfx.convertTo(imgf,CV_32F);
+    mfx.convertTo(mf,CV_32F);
+    
+    
+    float we=5.0;
+    
+    for(int y=0;y<h;y++)
+        for(int x=0;x<w;x++){
+            if(mask.at<uint8_t>(y,x)>0)
+                t.at<int32_t>(y,x)=0x7fffffff;
+            else
+                t.at<int32_t>(y,x)=0;
+            
+            s.at<int32_t>(y,x)=0.2*pow(dist.at<float>(y,x),2);            
+            
+            if(x<w-1){
+                float f0=norm(Mat(imgf.at<Vec3f>(y,x)),Mat(mf.at<Vec3f>(y,x)));
+                float fx=norm(Mat(imgf.at<Vec3f>(y,x+1)),Mat(mf.at<Vec3f>(y,x+1)));
+                
+                float df=norm(Mat(imgf.at<Vec3f>(y,x)),Mat(mf.at<Vec3f>(y,x+1)));
+                float db=norm(Mat(mf.at<Vec3f>(y,x)),Mat(imgf.at<Vec3f>(y,x+1)));
+                
+                exf.at<int32_t>(y,x)=we*abs(fx-f0);
+                exb.at<int32_t>(y,x)=we*abs(fx-f0);
+            }
+            if(y<h-1){
+                float f0=norm(Mat(imgf.at<Vec3f>(y,x)),Mat(mf.at<Vec3f>(y,x)));
+                float fy=norm(Mat(imgf.at<Vec3f>(y+1,x)),Mat(mf.at<Vec3f>(y+1,x)));
+
+                float df=norm(Mat(imgf.at<Vec3f>(y,x)),Mat(mf.at<Vec3f>(y+1,x)));
+                float db=norm(Mat(mf.at<Vec3f>(y,x)),Mat(imgf.at<Vec3f>(y+1,x)));
+                
+                eyf.at<int32_t>(y,x)=we*abs(fy-f0);
+                eyb.at<int32_t>(y,x)=we*abs(fy-f0);
+            }
+        }
+    
+    Mat seam=optimize_seam(s,t,exf,eyf,exb,eyb);
+    
+    Mat xxxl;
+    vector<Mat> chs;
+    chs.push_back(mask);
+    chs.push_back(seam);
+    chs.push_back(seam);
+    merge(chs,xxxl);
+    imwrite("aux-revised-mask.jpeg",xxxl);
+    
+    mask=seam;
     
     
     // seamless cloning
@@ -636,6 +825,7 @@ int main(int argc,char *argv[]){
             
             Mat id=imread(d);
             Mat idm=imread(dm,0);
+            threshold(idm,idm,127,255,THRESH_BINARY);
             Mat is=imread(s);
             
             blend_images(id,idm,is);
@@ -651,6 +841,7 @@ int main(int argc,char *argv[]){
             
             Mat id=imread(d);
             Mat idm=imread(dm,0);
+            threshold(idm,idm,127,255,THRESH_BINARY);
             
             change_color(id,idm);
             
