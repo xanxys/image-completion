@@ -349,7 +349,7 @@ void gradient_transfer(
         }
     }
     
-    const bool true_solution=true;
+    const bool true_solution=false;
     
     // true: Gauss-Seidel + over-relaxation (very slow)
     // non-true: multigrid (experimental, buggy, very fast)
@@ -489,6 +489,20 @@ float aux_gy(Mat& m,int x,int y){
     return m.at<float>(y+1,x)-m.at<float>(y,x);
 }
 
+float aux_gx_large(Mat& m,Mat& n,int x,int y){
+    float gm=pow(aux_gx(m,x,y),2)+pow(aux_gy(m,x,y),2);
+    float gn=pow(aux_gx(n,x,y),2)+pow(aux_gy(n,x,y),2);
+    
+    return aux_gx(gm>gn?m:n,x,y);
+}
+
+float aux_gy_large(Mat& m,Mat& n,int x,int y){
+    float gm=pow(aux_gx(m,x,y),2)+pow(aux_gy(m,x,y),2);
+    float gn=pow(aux_gx(n,x,y),2)+pow(aux_gy(n,x,y),2);
+    
+    return aux_gy(gm>gn?m:n,x,y);
+}
+
 void blend_images(Mat& img,Mat& mask,Mat& filler){
     // enlarge filler to cover img
     float a_i=1.0*img.size().width/img.size().height;
@@ -515,15 +529,23 @@ void blend_images(Mat& img,Mat& mask,Mat& filler){
         is[i].convertTo(i_c,CV_32F);
         fs[i].convertTo(f_c,CV_32F);
         
-        gradient_transfer(
-            i_c,mask,
-            bind(aux_ref,i_c,_1,_2),
-            bind(aux_gx,f_c,_1,_2),
-            bind(aux_gy,f_c,_1,_2));
+        // seamless cloning or mixing gradient
+        if(true){
+            gradient_transfer(
+                i_c,mask,
+                bind(aux_ref,i_c,_1,_2),
+                bind(aux_gx,f_c,_1,_2),
+                bind(aux_gy,f_c,_1,_2));
+        }
+        else{
+            gradient_transfer(
+                i_c,mask,
+                bind(aux_ref,i_c,_1,_2),
+                bind(aux_gx_large,f_c,i_c,_1,_2),
+                bind(aux_gy_large,f_c,i_c,_1,_2));
+        }
         
         i_c.convertTo(is[i],CV_8U);
-        
-//        break;
     }
     
     merge(is,img);
