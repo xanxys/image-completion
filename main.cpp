@@ -36,7 +36,7 @@ bool comparing_values_in(vector<K>& vs,int i,int j){
     return vs[i]<vs[j];
 }
 
-const char* start_bold="\x1b[1;31;49m";
+const char* begin_bold="\x1b[1;31;49m";
 const char* end_bold="\x1b[0;0;0m";
 
 
@@ -159,7 +159,7 @@ typedef vector<pair<Mat,string>> IndexGist;
 typedef pair<Mat,Mat> IndexWeight;
 
 void create_index_gist(string dir_path){
-    cout<<start_bold<<"creating index.gist"<<end_bold<<endl;
+    cout<<begin_bold<<"creating index.gist"<<end_bold<<endl;
     
     fs::path p(dir_path);
     
@@ -193,7 +193,7 @@ void create_index_gist(string dir_path){
 }
 
 IndexGist load_index_gist(){
-    cout<<start_bold<<"loading index.gist"<<end_bold<<endl;
+    cout<<begin_bold<<"loading index.gist"<<end_bold<<endl;
 
     ifstream index("./index.gist",ios::in);
     
@@ -221,7 +221,7 @@ IndexGist load_index_gist(){
 
 
 void dump_index_gist(IndexGist& igist){
-    cout<<start_bold<<"dumping index.gist"<<end_bold<<endl;
+    cout<<begin_bold<<"dumping index.gist"<<end_bold<<endl;
     
     cout<<"first 3dims before PCA"<<endl;
     ofstream naive("./naive.table",ios::out);
@@ -504,6 +504,8 @@ float aux_gy_large(Mat& m,Mat& n,int x,int y){
 }
 
 void blend_images(Mat& img,Mat& mask,Mat& filler){
+    cout<<begin_bold<<"blending images"<<end_bold<<endl;
+    
     // enlarge filler to cover img
     float a_i=1.0*img.size().width/img.size().height;
     float a_f=1.0*filler.size().width/filler.size().height;
