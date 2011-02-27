@@ -642,6 +642,20 @@ int main(int argc,char *argv[]){
             
             imwrite("b-"+d,id);
         }
+        else if(command=="color.partial"){
+            string d,dm;
+            cout<<"original?"<<flush;
+            getline(cin,d);
+            cout<<"image mask?"<<flush;
+            getline(cin,dm);
+            
+            Mat id=imread(d);
+            Mat idm=imread(dm,0);
+            
+            change_color(id,idm);
+            
+            imwrite("cp-"+d,id);
+        }
         else if(command=="query"){
             int n;
             string path,d;
