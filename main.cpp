@@ -814,6 +814,45 @@ int main(int argc,char *argv[]){
         else if(command=="load"){
             index=load_index_gist();
         }
+        else if(command=="fill"){
+            int n;
+            string d,dm,dummy;
+            cout<<"image w/ hole?"<<flush;
+            getline(cin,d);
+            cout<<"image mask?"<<flush;
+            getline(cin,dm);
+            cout<<"#candidates?"<<flush;
+            cin>>n;
+            getline(cin,dummy);
+
+            
+            Mat id=imread(d);
+            Mat idm=imread(dm,0);
+            threshold(idm,idm,127,255,THRESH_BINARY);
+            
+            cout<<"retrieving images"<<endl;
+            Mat qi=imread(d);
+            Mat q=image_descriptor(qi);
+            vector<string> paths=search_image(index,q,n);
+            
+            cout<<"composing images"<<endl;
+            int i=0;
+            for(auto it=paths.begin();it!=paths.end();++it){
+                ostringstream fn;
+                fn<<"result-"<<i++<<".jpeg";
+                
+                cout<<":"<<*it<<" > "<<fn.str()<<endl;
+                
+                Mat img=imread(*it);
+                
+                Mat dst,mask;
+                id.copyTo(dst);
+                idm.copyTo(mask);
+                
+                blend_images(dst,mask,img);
+                imwrite(fn.str(),dst);
+            }
+        }
         else if(command=="blend"){
             string d,dm,s;
             cout<<"image w/ hole?"<<flush;
