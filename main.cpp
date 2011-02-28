@@ -14,8 +14,6 @@
 #include <boost/graph/adjacency_list.hpp>
 #include <boost/graph/graph_traits.hpp>
 #include <boost/graph/graph_utility.hpp>
-// #include <boost/graph/edmonds_karp_max_flow.hpp>
-// #include <boost/graph/push_relabel_max_flow.hpp>
 #include <boost/graph/kolmogorov_max_flow.hpp>
 #include <opencv/cv.h>
 #include <opencv/highgui.h>
@@ -306,25 +304,18 @@ vector<Mat> create_pyramid(Mat m,int n,float exponent=0){
 // ex.size==ey.size is smaller than s.size by (1,1)
 Mat optimize_seam(Mat& s,Mat& t,Mat& exf,Mat& eyf,Mat& exb,Mat& eyb){
     typedef adjacency_list_traits<vecS,vecS,directedS> Traits;
-/*
+
     typedef adjacency_list<vecS,vecS,directedS,
-        property<vertex_name_t,string,
-            property<vertex_index_t,long>>,
-        property<edge_capacity_t,long,
-            property<edge_residual_capacity_t,long,
-                property<edge_reverse_t,Traits::edge_descriptor>>>> Graph;
-*/
-  typedef adjacency_list < vecS, vecS, directedS,
-    property < vertex_name_t, std::string,
-    property < vertex_index_t, long,
-    property < vertex_color_t, boost::default_color_type,
-    property < vertex_distance_t, long,
-    property < vertex_predecessor_t, Traits::edge_descriptor > > > > >,
-    
-    property < edge_capacity_t, long,
-    property < edge_residual_capacity_t, long,
-    property < edge_reverse_t, Traits::edge_descriptor > > > > Graph;
-    
+        property<vertex_name_t, std::string,
+            property<vertex_index_t, long,
+            property<vertex_color_t, boost::default_color_type,
+            property<vertex_distance_t, long,
+            property<vertex_predecessor_t, Traits::edge_descriptor>>>>>,
+
+        property<edge_capacity_t, long,
+            property<edge_residual_capacity_t, long,
+                property<edge_reverse_t, Traits::edge_descriptor>>>> Graph;
+
     const int w=s.size().width;
     const int h=s.size().height;
     
@@ -381,34 +372,19 @@ Mat optimize_seam(Mat& s,Mat& t,Mat& exf,Mat& eyf,Mat& exb,Mat& eyb){
     cout<<"graph constructed"<<endl;
     
     long flow=kolmogorov_max_flow(g,vs,vt);
-//    long flow=edmonds_karp_max_flow(g,vs,vt);
     cout<<"max flow:"<<flow<<endl;
     
     
     Mat mask(h,w,CV_8U);
     
-    graph_traits < Graph >::out_edge_iterator ei,e_end;
+    graph_traits<Graph>::out_edge_iterator ei,e_end;
     for(tie(ei, e_end) = out_edges(vs, g); ei != e_end; ++ei){
-    //    cout<<"  RCap:"<<residual_capacity[*ei]<<"  Cap:"<<capacity[*ei]<<endl;
-        
         int v=target(*ei,g);
 
         int x=v%w;
         int y=v/w;
         
-        
-        Traits::edge_descriptor en=edge(v,vt,g).first;
-        
-//        cout<<x<<","<<y<<": "<<residual_capacity[*ei]<<" "<<residual_capacity[en]<<endl;
-        
-        
-//        cout<<residual_capacity[*ei]<<endl;
-
-        if(residual_capacity[*ei]==0) // capacity[*ei])
-            mask.at<uint8_t>(y,x)=255;
-        else
-            mask.at<uint8_t>(y,x)=0;
-
+        mask.at<uint8_t>(y,x)=(residual_capacity[*ei]==0)?255:0;
     }
 
     return mask;
@@ -626,29 +602,29 @@ void blend_images(Mat& img,Mat& mask,Mat& filler){
     cout<<begin_bold<<"blending images"<<end_bold<<endl;
     
     // enlarge filler to cover img
-    float a_i=1.0*img.size().width/img.size().height;
+    const int w=img.size().width;
+    const int h=img.size().height;
+    
+    float a_i=1.0*w/h;
     float a_f=1.0*filler.size().width/filler.size().height;
     
     Mat m;    
     if(a_i>a_f){
-        float s=1.0*img.size().width/filler.size().width;
+        float s=1.0*w/filler.size().width;
         resize(filler,m,Size(),s,s);
         
-        float dh_half=(m.size().height-img.size().height)/2;
+        float dh_half=(m.size().height-h)/2;
         m=Mat(m,Rect(Size(0,dh_half),img.size()));
     }
     else{
-        float s=1.0*img.size().height/filler.size().height;
+        float s=1.0*h/filler.size().height;
         resize(filler,m,Size(),s,s);
         
-        float dv_half=(m.size().width-img.size().width)/2;
+        float dv_half=(m.size().width-w)/2;
         m=Mat(m,Rect(Size(dv_half,0),img.size()));
     }
     
     assert(img.size()==m.size());
-    
-    const int w=img.size().width;
-    const int h=img.size().height;
     
     
     // find optimal seam
@@ -661,16 +637,10 @@ void blend_images(Mat& img,Mat& mask,Mat& filler){
     
     Mat inv_mask=255-mask;
     
-    Mat ext_mask;
-    dilate(mask,ext_mask,Mat());
-    ext_mask=ext_mask<=mask;
-    
-    Mat dist,dist_bnd;
+    Mat dist;
     distanceTransform(inv_mask,dist,CV_DIST_L2,3);
-    distanceTransform(ext_mask,dist_bnd,CV_DIST_L2,3);
     
     imwrite("aux-dist0.jpeg",dist);
-    imwrite("aux-dist1.jpeg",dist_bnd);
     
     Mat imgfx,mfx;
     cvtColor(img,imgfx,CV_RGB2Lab);
@@ -910,10 +880,6 @@ int main(int argc,char *argv[]){
                 Mat img=imread(*it);
                 imwrite(fn.str(),img);
             }
-            
-            
-            
-            
         }
         else
             cout<<"unknown command: "<<command<<endl;
